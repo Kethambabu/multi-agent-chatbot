@@ -1,0 +1,112 @@
+# Replace Text2Image Agent: Old Replicate → V2 Pollinations.AI
+
+## Background
+
+The current `text2image.py` agent uses **Replicate's SDXL model** which requires a paid API key (`REPLICATE_API_TOKEN`). The new v2 implementation uses **Pollinations.AI** which is **completely free** — no API key, no signup, no cost.
+
+### Key Differences
+
+| Aspect | Old (Replicate) | New (Pollinations.AI) |
+|--------|----------------|----------------------|
+| API Key Required | ✅ Yes (`REPLICATE_API_TOKEN`) | ❌ No |
+| Cost | 💰 Paid | 🆓 Free |
+| Models | SDXL only | FLUX, FLUX-Realism, Turbo, 3D, Anime, Dark |
+| Image sizes | Fixed 1024×1024 | 512–1280 configurable |
+| Dependencies | `replicate` package | `requests`, `Pillow` (already present) |
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> The old agent returned **image URLs from Replicate** (temporary URLs that expire). The new agent will generate images via Pollinations.AI and **save them to disk** in `outputs/images/`, returning the file path. The backend and frontend will be updated to handle both URL and file-path results seamlessly.
+
+> [!IMPORTANT]
+> The `replicate` Python package and `REPLICATE_API_TOKEN` environment variable will no longer be needed after this change. The `utils/image_client.py` file (Replicate client) will be **removed** since no other agent uses it.
+
+---
+
+## Proposed Changes
+
+### Agent Layer
+
+#### [DELETE] [text2image.py](file:///c:/Users/CSE/Desktop/xtra/xtra/agents/text2image.py)
+- Remove the old Replicate-based text2image agent entirely.
+
+#### [NEW] [text2image_v2.py](file:///c:/Users/CSE/Desktop/xtra/xtra/agents/text2image_v2.py)
+- New agent class `Text2ImageV2Agent` following the same patterns as `ImageAnalysisAgent` and `SummarizerAgent`:
+  - Class-based with `__init__`, `generate_image()`, `close()`, context manager support
+  - Uses Pollinations.AI API (free, no key required)
+  - `generate_image(prompt: str) → dict` returning `{"status": "success", "image_path": "...", "message": "..."}`
+  - Saves images to `outputs/images/` with unique timestamped filenames
+  - Supports configurable model, width, height, seed, and enhance parameters
+  - Comprehensive error handling and logging
+  - Always enabled (no API key check needed)
+
+---
+
+### Utility Layer
+
+#### [DELETE] [image_client.py](file:///c:/Users/CSE/Desktop/xtra/xtra/utils/image_client.py)
+- Remove the Replicate API client — it is only used by the old `text2image.py` agent.
+
+---
+
+### Workflow Layer
+
+#### [MODIFY] [workflow.py](file:///c:/Users/CSE/Desktop/xtra/xtra/graph/workflow.py)
+- **Import**: Replace `from agents.text2image import Text2ImageAgent` → `from agents.text2image_v2 import Text2ImageV2Agent`
+- **`create_workflow()`**: Replace `Text2ImageAgent(config)` → `Text2ImageV2Agent()` (no config needed — no API key)
+- **`node_text_to_image()`**: Update to handle the new dict response format `{"status": ..., "image_path": ..., "image_url": ...}`
+- **`build_workflow()`**: Replace initialization — no more disabled/fallback state needed since v2 is always available
+- No changes to routing logic — `TaskType.IMAGE_GENERATION` remains the same
+
+---
+
+### Backend Layer
+
+#### [MODIFY] [backend.py](file:///c:/Users/CSE/Desktop/xtra/xtra/backend.py)
+- **`process_and_download()`**: Update to handle `image_path` results alongside `image_url`. Serve local files via `StaticFiles` or return path in JSON.
+- Mount `/outputs` as a static file directory for serving generated images.
+
+---
+
+### Config Layer
+
+#### [MODIFY] [config.py](file:///c:/Users/CSE/Desktop/xtra/xtra/config.py)
+- Remove `replicate_api_token` property and its validation/logging (lines 98, 115–126)
+- Remove the Replicate-related comments from the docstring
+
+#### [MODIFY] [.env](file:///c:/Users/CSE/Desktop/xtra/xtra/.env)
+- Remove the `REPLICATE_API_TOKEN` line
+
+---
+
+### Requirements
+
+#### [MODIFY] [requirements.txt](file:///c:/Users/CSE/Desktop/xtra/xtra/requirements.txt)
+- **Remove**: `replicate==1.0.7`
+- **Keep**: `requests`, `Pillow` (already present, needed by v2)
+- No new dependencies needed
+
+---
+
+## Open Questions
+
+None — all decisions are clear from the analysis. The v2 implementation is strictly superior (free, no key, multiple models) and the integration path is well-defined.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+1. Run `python -c "from agents.text2image_v2 import Text2ImageV2Agent; a = Text2ImageV2Agent(); print('OK')"` — verify import and initialization
+2. Run `python -c "from graph.workflow import build_workflow"` — verify no import errors in workflow
+3. Run `python -c "from backend import app"` — verify backend imports clean
+4. Check no remaining references to old agent: `grep -r "text2image" --include="*.py"` should only show `text2image_v2`
+
+### Manual Verification
+- Start backend with `python backend.py` and frontend with `streamlit run frontend/app.py`
+- Send an image generation prompt like "Generate an image of a sunset over mountains"
+- Verify image appears in the Streamlit UI
+- Verify image file saved in `outputs/images/`
